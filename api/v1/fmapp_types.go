@@ -39,7 +39,8 @@ type FMAppSpec struct {
 // FMAppStatus defines the observed state of FMApp
 type FMAppStatus struct { // INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	AvailableReplicas int32 `json:"replicas"`
+	AvailableReplicas   int32  `json:"replicas"`
+	VirtualServiceState string `json:"virtualservicestate"`
 }
 
 //+kubebuilder:object:root=true

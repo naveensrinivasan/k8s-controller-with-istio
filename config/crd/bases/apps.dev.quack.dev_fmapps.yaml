@@ -56,8 +56,11 @@ spec:
                   this file'
                 format: int32
                 type: integer
+              virtualservicestate:
+                type: string
             required:
             - replicas
+            - virtualservicestate
             type: object
         type: object
     served: true

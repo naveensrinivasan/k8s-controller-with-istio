@@ -30,6 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	appsv1 "dev.quack.dev/guestbook/api/v1"
+	istionetworkingv1alpha3 "istio.io/api/networking/v1alpha3"
+	istiov1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -141,8 +143,8 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// set a container for our deployment
 		containers := []corev1.Container{
 			{
-				Name:  "nginx",
-				Image: "nginx:latest",
+				Name:  "httpbin",
+				Image: "docker.io/kennethreitz/httpbin",
 			},
 		}
 
@@ -213,12 +215,22 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	vs := CreateVirtualService(&foo)
+	err := ctrl.SetControllerReference(&foo, vs, r.Scheme)
+	if err != nil {
+		log.Error(err, "unable to set vs controller reference")
+		return ctrl.Result{}, err
+	}
 
+	// creating virtual service
+	err = r.Create(ctx, vs)
+	if err != nil {
+		log.Error(err, "unable to create virtual reference")
+		return ctrl.Result{}, err
+	}
 	// set foo.status.AvailableReplicas from deployment
 	availableReplicas := deployment.Status.AvailableReplicas
 	if availableReplicas == foo.Status.AvailableReplicas {
-		// if availableReplicas equals availableReplicas, we wouldn't update anything.
-		// exit Reconcile func without updating foo.status
 		return ctrl.Result{}, nil
 	}
 	foo.Status.AvailableReplicas = availableReplicas
@@ -230,7 +242,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// create event for updated foo.status
-	r.Recorder.Eventf(&foo, corev1.EventTypeNormal, "Updated", "Update foo.status.AvailableReplicas: %d", foo.Status.AvailableReplicas)
+	// r.Recorder.Eventf(&foo, corev1.EventTypeNormal, "Updated", "Update foo.status.AvailableReplicas: %d", foo.Status.AvailableReplicas)
 
 	return ctrl.Result{}, nil
 }
@@ -295,4 +307,37 @@ func (r *FMAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.FMApp{}).
 		Complete(r)
+}
+
+func CreateVirtualService(workload *appsv1.FMApp) *istiov1alpha3.VirtualService {
+	hostname := "httpbin.example.com"
+	vs := &istiov1alpha3.VirtualService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      hostname,
+			Namespace: workload.Namespace,
+		},
+		Spec: istionetworkingv1alpha3.VirtualService{
+			Hosts:    []string{hostname},
+			Gateways: []string{"httpbin-gateway"},
+			Http: []*istionetworkingv1alpha3.HTTPRoute{{
+				Match: []*istionetworkingv1alpha3.HTTPMatchRequest{{
+					Uri: &istionetworkingv1alpha3.StringMatch{
+						MatchType: &istionetworkingv1alpha3.StringMatch_Prefix{
+							Prefix: "/status",
+						},
+					},
+				}},
+				Route: []*istionetworkingv1alpha3.HTTPRouteDestination{{
+					Destination: &istionetworkingv1alpha3.Destination{
+						Port: &istionetworkingv1alpha3.PortSelector{
+							Number: uint32(80),
+						},
+						Host: "httpbin",
+					},
+				}},
+			}},
+		},
+	}
+
+	return vs
 }
