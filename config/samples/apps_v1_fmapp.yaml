@@ -1,0 +1,7 @@
+apiVersion: apps.dev.quack.dev/v1
+kind: FMApp
+metadata:
+  name: fmapp-sample
+spec:
+  deploymentName: "naveen"
+  replicas: 2

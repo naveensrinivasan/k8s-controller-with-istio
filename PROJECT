@@ -1,0 +1,16 @@
+domain: dev.quack.dev
+layout:
+- go.kubebuilder.io/v3
+projectName: new-controller
+repo: dev.quack.dev/guestbook
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: dev.quack.dev
+  group: apps
+  kind: FMApp
+  path: dev.quack.dev/guestbook/api/v1
+  version: v1
+version: "3"
