@@ -30,6 +30,9 @@ type FMAppSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format:=string
 	DeploymentName string `json:"deploymentName,omitempty"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Format:=string
+	Image string `json:"image"`
 
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=0

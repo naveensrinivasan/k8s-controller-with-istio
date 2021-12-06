@@ -5,3 +5,4 @@ metadata:
 spec:
   deploymentName: "naveen"
   replicas: 2
+  image: "foo"

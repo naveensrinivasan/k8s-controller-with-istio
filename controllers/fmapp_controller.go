@@ -19,6 +19,8 @@ package controllers
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/go-logr/logr"
 	apps "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +49,8 @@ type FMAppReconciler struct {
 //+kubebuilder:rbac:groups=apps.dev.quack.dev,resources=fmapps/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=apps.dev.quack.dev,resources=fmapps/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=,resources=service,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -61,24 +65,27 @@ type FMAppReconciler struct {
 func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 	log := log.Log.WithName("controllers").WithName("FMApp")
+	// set a label for our deployment
+	labels := map[string]string{
+		"app":        "fmapp",
+		"controller": req.Name,
+	}
 
-	var foo appsv1.FMApp
+	var fmapp appsv1.FMApp
 	log.Info("fetching Foo Resource")
-	if err := r.Get(ctx, req.NamespacedName, &foo); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, &fmapp); err != nil {
 		log.Error(err, "unable to fetch Foo")
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
 		// requeue (we'll need to wait for a new notification), and we can get them
 		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	vs := CreateVirtualService(&fmapp)
 	/*
-		### 2: Clean Up old Deployment which had been owned by Foo Resource.
+		### 2: Clean Up old Deployment which had been owned by FMApp Resource.
 		We'll find deployment object which foo object owns.
-		If there is a deployment which is owned by foo and it doesn't match foo.spec.deploymentName,
-		we clean up the deployment object.
-		(If we do nothing without this func, the old deployment object keeps existing.)
 	*/
-	if err := r.cleanupOwnedResources(ctx, log, &foo); err != nil {
+	if err := r.cleanupOwnedResources(ctx, log, &fmapp, req); err != nil {
 		log.Error(err, "failed to clean up old Deployment resources for this FMApp")
 		return ctrl.Result{}, err
 	}
@@ -90,7 +97,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	*/
 
 	// get deploymentName from foo.Spec
-	deploymentName := foo.Spec.DeploymentName
+	deploymentName := fmapp.Spec.DeploymentName
 
 	// define deployment template using deploymentName
 	deploy := &apps.Deployment{
@@ -119,16 +126,10 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		// set the replicas from foo.Spec
 		replicas := int32(1)
-		if foo.Spec.Replicas != nil {
-			replicas = *foo.Spec.Replicas
+		if fmapp.Spec.Replicas != nil {
+			replicas = *fmapp.Spec.Replicas
 		}
 		deploy.Spec.Replicas = &replicas
-
-		// set a label for our deployment
-		labels := map[string]string{
-			"app":        "nginx",
-			"controller": req.Name,
-		}
 
 		// set labels to spec.selector for our deployment
 		if deploy.Spec.Selector == nil {
@@ -154,7 +155,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 
 		// set the owner so that garbage collection can kicks in
-		if err := ctrl.SetControllerReference(&foo, deploy, r.Scheme); err != nil {
+		if err := ctrl.SetControllerReference(&fmapp, deploy, r.Scheme); err != nil {
 			log.Error(err, "unable to set ownerReference from Foo to Deployment")
 			return err
 		}
@@ -163,27 +164,21 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return nil
 	}); err != nil {
 
-		// error handling of ctrl.CreateOrUpdate
 		log.Error(err, "unable to ensure deployment is correct")
+		r.Recorder.Eventf(&fmapp, corev1.EventTypeWarning, "Deployment", "unable to ensure deployment is correct %s", err.Error())
 		return ctrl.Result{}, err
 
 	}
 	// Create or Update service  object
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, service, func() error {
-		// set a label for our deployment
-		labels := map[string]string{
-			"app":        "nginx",
-			"controller": req.Name,
-		}
-
 		// set labels to spec.selector for our deployment
 		if service.Spec.Selector == nil {
 			service.Spec.Selector = labels
 		}
 
 		// set the owner so that garbage collection can kicks in
-		if err := ctrl.SetControllerReference(&foo, service, r.Scheme); err != nil {
-			log.Error(err, "unable to set ownerReference from Foo to Deployment")
+		if err := ctrl.SetControllerReference(&fmapp, service, r.Scheme); err != nil {
+			log.Error(err, "unable to set ownerReference from fmapp to Deployment")
 			return err
 		}
 
@@ -193,8 +188,25 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		// error handling of ctrl.CreateOrUpdate
 		log.Error(err, "unable to ensure service is correct")
+		r.Recorder.Eventf(&fmapp, corev1.EventTypeWarning, "Service", "unable to ensure service is correct %s", err.Error())
 		return ctrl.Result{}, err
 
+	}
+
+	err := r.Get(ctx, req.NamespacedName, vs)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating a VS")
+		err = r.Create(ctx, vs)
+		if err != nil {
+			log.Error(err, "unable to create virtual reference")
+			r.Recorder.Eventf(&fmapp, corev1.EventTypeWarning, "VirtualService", "Unable to create VS: %s", err.Error())
+			return ctrl.Result{}, err
+		}
+		// set the owner so that garbage collection can kicks in
+		if err := ctrl.SetControllerReference(&fmapp, vs, r.Scheme); err != nil {
+			log.Error(err, "unable to set ownerReference from fmapp to Deployment")
+			return ctrl.Result{}, err
+		}
 	}
 
 	/*
@@ -207,7 +219,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// get deployment object from in-memory-cache
 	var deployment apps.Deployment
-	deploymentNamespacedName := client.ObjectKey{Namespace: req.Namespace, Name: foo.Spec.DeploymentName}
+	deploymentNamespacedName := client.ObjectKey{Namespace: req.Namespace, Name: fmapp.Spec.DeploymentName}
 	if err := r.Get(ctx, deploymentNamespacedName, &deployment); err != nil {
 		log.Error(err, "unable to fetch Deployment")
 		// we'll ignore not-found errors, since they can't be fixed by an immediate
@@ -215,39 +227,26 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	vs := CreateVirtualService(&foo)
-	err := ctrl.SetControllerReference(&foo, vs, r.Scheme)
-	if err != nil {
-		log.Error(err, "unable to set vs controller reference")
-		return ctrl.Result{}, err
-	}
-
-	// creating virtual service
-	err = r.Create(ctx, vs)
-	if err != nil {
-		log.Error(err, "unable to create virtual reference")
-		return ctrl.Result{}, err
-	}
 	// set foo.status.AvailableReplicas from deployment
 	availableReplicas := deployment.Status.AvailableReplicas
-	if availableReplicas == foo.Status.AvailableReplicas {
+	if availableReplicas == fmapp.Status.AvailableReplicas {
 		return ctrl.Result{}, nil
 	}
-	foo.Status.AvailableReplicas = availableReplicas
+	fmapp.Status.AvailableReplicas = availableReplicas
 
 	// update foo.status
-	if err := r.Status().Update(ctx, &foo); err != nil {
+	if err := r.Status().Update(ctx, &fmapp); err != nil {
 		log.Error(err, "unable to update Foo status")
 		return ctrl.Result{}, err
 	}
 
 	// create event for updated foo.status
-	// r.Recorder.Eventf(&foo, corev1.EventTypeNormal, "Updated", "Update foo.status.AvailableReplicas: %d", foo.Status.AvailableReplicas)
+	r.Recorder.Eventf(&fmapp, corev1.EventTypeNormal, "Updated", "Update fm.status.AvailableReplicas: %d", fmapp.Status.AvailableReplicas)
 
 	return ctrl.Result{}, nil
 }
 
-func (r *FMAppReconciler) cleanupOwnedResources(ctx context.Context, log logr.Logger, foo *appsv1.FMApp) error {
+func (r *FMAppReconciler) cleanupOwnedResources(ctx context.Context, log logr.Logger, foo *appsv1.FMApp, req ctrl.Request) error {
 	log.Info("finding existing Deployments for Foo resource")
 
 	// List all deployment resources owned by this Foo
@@ -294,7 +293,12 @@ func (r *FMAppReconciler) cleanupOwnedResources(ctx context.Context, log logr.Lo
 			return err
 		}
 	}
-	return nil
+	vs := CreateVirtualService(foo)
+	err := r.Get(context.Background(), req.NamespacedName, vs)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	return r.Delete(ctx, vs)
 }
 
 var (
@@ -313,7 +317,7 @@ func CreateVirtualService(workload *appsv1.FMApp) *istiov1alpha3.VirtualService 
 	hostname := "httpbin.example.com"
 	vs := &istiov1alpha3.VirtualService{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      hostname,
+			Name:      workload.GetName(),
 			Namespace: workload.Namespace,
 		},
 		Spec: istionetworkingv1alpha3.VirtualService{

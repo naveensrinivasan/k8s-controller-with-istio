@@ -13,6 +13,15 @@ rules:
   verbs:
   - create
   - patch
+- resources:
+  - service
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 - apiGroups:
   - apps
   resources:
