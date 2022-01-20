@@ -5,4 +5,4 @@ metadata:
 spec:
   deploymentName: "naveen"
   replicas: 2
-  image: "docker.io/kennethreitz/httpbin"
+  image: "mongodb"
