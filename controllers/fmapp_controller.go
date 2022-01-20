@@ -80,7 +80,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	vs := CreateVirtualService(&fmapp)
+	//vs := CreateVirtualService(&fmapp)
 	/*
 		### 2: Clean Up old Deployment which had been owned by FMApp Resource.
 		We'll find deployment object which foo object owns.
@@ -115,8 +115,8 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		Spec: v1.ServiceSpec{
 			Ports: []v1.ServicePort{
 				{
-					Name: "http",
-					Port: 80,
+					Name: "tcp",
+					Port: 27017,
 				},
 			},
 		},
@@ -145,7 +145,7 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		containers := []corev1.Container{
 			{
 				Name:  "httpbin",
-				Image: "docker.io/kennethreitz/httpbin",
+				Image: "mongo",
 			},
 		}
 
@@ -193,21 +193,23 @@ func (r *FMAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	}
 
-	err := r.Get(ctx, req.NamespacedName, vs)
-	if err != nil && errors.IsNotFound(err) {
-		log.Info("Creating a VS")
-		err = r.Create(ctx, vs)
-		if err != nil {
-			log.Error(err, "unable to create virtual reference")
-			r.Recorder.Eventf(&fmapp, corev1.EventTypeWarning, "VirtualService", "Unable to create VS: %s", err.Error())
-			return ctrl.Result{}, err
+	/*
+		err := r.Get(ctx, req.NamespacedName, vs)
+		if err != nil && errors.IsNotFound(err) {
+			log.Info("Creating a VS")
+			err = r.Create(ctx, vs)
+			if err != nil {
+				log.Error(err, "unable to create virtual reference")
+				r.Recorder.Eventf(&fmapp, corev1.EventTypeWarning, "VirtualService", "Unable to create VS: %s", err.Error())
+				return ctrl.Result{}, err
+			}
+			// set the owner so that garbage collection can kicks in
+			if err := ctrl.SetControllerReference(&fmapp, vs, r.Scheme); err != nil {
+				log.Error(err, "unable to set ownerReference from fmapp to Deployment")
+				return ctrl.Result{}, err
+			}
 		}
-		// set the owner so that garbage collection can kicks in
-		if err := ctrl.SetControllerReference(&fmapp, vs, r.Scheme); err != nil {
-			log.Error(err, "unable to set ownerReference from fmapp to Deployment")
-			return ctrl.Result{}, err
-		}
-	}
+	*/
 
 	/*
 		### 4: Update foo status.
